@@ -135,13 +135,14 @@ func (p *Metrics) CollectMetrics(vehicle_name string, v *rivian.VehicleState) {
 func main() {
 	p := NewPrometheus()
 	p.CreateMetrics()
-	var login bool
+	var login, debug bool
 	var sessionFile string
+	flag.BoolVar(&debug, "d", false, "debug")
 	flag.BoolVar(&login, "l", false, "login and save session")
 	flag.StringVar(&sessionFile, "s", ".rivian_session", "filename for session storage")
 	ctx := context.Background()
 	c := rivian.NewClient()
-	c.Debug(true)
+	c.Debug(debug)
 	c.ReadSessionData(sessionFile)
 	defer c.WriteSessionData(sessionFile)
 
@@ -176,6 +177,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	for _, v := range vehicles {
+		state, err := c.GetVehicleState(ctx, v)
+		if err != nil {
+			log.Fatal(err)
+		}
+		p.CollectMetrics(v.Name, state)
+	}
 
 	done := make(chan struct{})
 	ticker := time.NewTicker(30 * time.Second)
@@ -191,6 +199,11 @@ func main() {
 					if err != nil {
 						log.Println(err)
 						return
+					}
+					if state.OtaCurrentVersionWeek.Value == 0 {
+						// Rivian once returned all nulls
+						log.Println("Skipping nil values")
+						continue
 					}
 					p.CollectMetrics(v.Name, state)
 				}
