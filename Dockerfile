@@ -1,11 +1,11 @@
-FROM golang:1.23
+FROM golang:1.22
 
-WORKDIR /usr/src/app
+WORKDIR /app
 
 COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 
-COPY . .
-RUN go build -v -o /usr/local/bin/app ./...
+COPY . ./
+RUN go build -v -o rivian-prometheus
 
-CMD ["app"]
+CMD ["/app/rivian-prometheus"]
