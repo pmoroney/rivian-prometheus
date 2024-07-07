@@ -362,14 +362,14 @@ type loggingTransport struct {
 
 func (s *loggingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	var bytes []byte
-	if s.Log {
+	if s.Log && r != nil {
 		bytes, _ = httputil.DumpRequestOut(r, true)
 	}
 
 	resp, err := http.DefaultTransport.RoundTrip(r)
 	// err is returned after dumping the response
 
-	if s.Log {
+	if s.Log && resp != nil {
 		respBytes, _ := httputil.DumpResponse(resp, true)
 		bytes = append(bytes, respBytes...)
 
