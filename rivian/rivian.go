@@ -44,7 +44,7 @@ func (c *Client) NeedsLogin() bool {
 
 func (c *Client) Debug(on bool) {
 	c.client = c.client.WithDebug(on)
-	c.httpClient.Transport.(*loggingTransport).Log = true
+	c.httpClient.Transport.(*loggingTransport).Log = on
 }
 
 func (c *Client) AddHeaders(req *http.Request) {

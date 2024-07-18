@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login OTP Form</title>
+</head>
+<body>
+    <h1>Login</h1>
+    {{if .Error}}  <p style="color: red;">Error: {{.Error}}</p>  {{end}}
+    <form action="/otp" method="post">
+        <label for="otp">OTP Token:</label>
+        <input type="text" id="otp" name="otp"><br>
+
+        <button type="submit">Login</button>
+    </form>
+</body>
+</html>
