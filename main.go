@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"text/template"
 	"time"
 
@@ -24,12 +27,14 @@ import (
 var indexTemplateFS embed.FS
 
 type Metrics struct {
-	collectors map[string]*prometheus.GaugeVec
+	gauges   map[string]*prometheus.GaugeVec
+	counters map[string]*prometheus.CounterVec
 }
 
 func NewPrometheus() *Metrics {
 	return &Metrics{
-		collectors: make(map[string]*prometheus.GaugeVec),
+		gauges:   make(map[string]*prometheus.GaugeVec),
+		counters: make(map[string]*prometheus.CounterVec),
 	}
 }
 
@@ -42,7 +47,7 @@ func toSnakeCase(s string) string {
 }
 
 func (p *Metrics) CreateMetrics() {
-	p.collectors["need_login"] = prometheus.NewGaugeVec(
+	p.gauges["need_login"] = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "rivian",
 			Subsystem: "account",
@@ -50,9 +55,9 @@ func (p *Metrics) CreateMetrics() {
 		},
 		[]string{},
 	)
-	prometheus.MustRegister(p.collectors["need_login"])
+	prometheus.MustRegister(p.gauges["need_login"])
 
-	p.collectors["last_update"] = prometheus.NewGaugeVec(
+	p.gauges["last_update"] = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "rivian",
 			Subsystem: "vehicle_info",
@@ -62,7 +67,18 @@ func (p *Metrics) CreateMetrics() {
 			"vehicle_name",
 		},
 	)
-	prometheus.MustRegister(p.collectors["last_update"])
+	prometheus.MustRegister(p.gauges["last_update"])
+
+	p.counters["errors"] = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "rivian",
+			Subsystem: "application",
+			Name:      "errors_total",
+			Help:      "Total number of errors",
+		},
+		[]string{"type"},
+	)
+	prometheus.MustRegister(p.counters["errors"])
 
 	var s rivian.VehicleState
 	state := reflect.ValueOf(s)
@@ -71,7 +87,7 @@ func (p *Metrics) CreateMetrics() {
 		name := toSnakeCase(field.Name)
 		switch field.Type.Name() {
 		case "FloatValue":
-			p.collectors[name] = prometheus.NewGaugeVec(
+			p.gauges[name] = prometheus.NewGaugeVec(
 				prometheus.GaugeOpts{
 					Namespace: "rivian",
 					Subsystem: "vehicle_info",
@@ -81,9 +97,9 @@ func (p *Metrics) CreateMetrics() {
 					"vehicle_name",
 				},
 			)
-			prometheus.MustRegister(p.collectors[name])
+			prometheus.MustRegister(p.gauges[name])
 		case "StringValue":
-			p.collectors[name] = prometheus.NewGaugeVec(
+			p.gauges[name] = prometheus.NewGaugeVec(
 				prometheus.GaugeOpts{
 					Namespace: "rivian",
 					Subsystem: "vehicle_info",
@@ -94,11 +110,11 @@ func (p *Metrics) CreateMetrics() {
 					"value",
 				},
 			)
-			prometheus.MustRegister(p.collectors[name])
+			prometheus.MustRegister(p.gauges[name])
 		case "LocationValue":
 			for _, f := range []string{"latitude", "longitude"} {
 				name := name + "_" + f
-				p.collectors[name] = prometheus.NewGaugeVec(
+				p.gauges[name] = prometheus.NewGaugeVec(
 					prometheus.GaugeOpts{
 						Namespace: "rivian",
 						Subsystem: "vehicle_info",
@@ -108,12 +124,12 @@ func (p *Metrics) CreateMetrics() {
 						"vehicle_name",
 					},
 				)
-				prometheus.MustRegister(p.collectors[name])
+				prometheus.MustRegister(p.gauges[name])
 			}
 		case "LocationErrorValue":
 			for _, f := range []string{"position_vertical", "position_horizontal", "speed", "bearing"} {
 				name := name + "_" + f
-				p.collectors[name] = prometheus.NewGaugeVec(
+				p.gauges[name] = prometheus.NewGaugeVec(
 					prometheus.GaugeOpts{
 						Namespace: "rivian",
 						Subsystem: "vehicle_info",
@@ -123,7 +139,7 @@ func (p *Metrics) CreateMetrics() {
 						"vehicle_name",
 					},
 				)
-				prometheus.MustRegister(p.collectors[name])
+				prometheus.MustRegister(p.gauges[name])
 			}
 		default:
 			fmt.Printf("unknown type: %s: %s\n", field.Type.Name(), name)
@@ -132,26 +148,26 @@ func (p *Metrics) CreateMetrics() {
 
 }
 func (p *Metrics) CollectMetrics(vehicle_name string, v *rivian.VehicleState) {
-	p.collectors["last_update"].With(prometheus.Labels{"vehicle_name": vehicle_name}).SetToCurrentTime()
+	p.gauges["last_update"].With(prometheus.Labels{"vehicle_name": vehicle_name}).SetToCurrentTime()
 	state := reflect.ValueOf(v).Elem()
 	for i := 0; i < state.NumField(); i++ {
 		field := state.Type().Field(i)
 		name := toSnakeCase(field.Name)
 		switch field.Type.Name() {
 		case "FloatValue":
-			p.collectors[name].With(prometheus.Labels{"vehicle_name": vehicle_name}).Set(state.FieldByName(field.Name).FieldByName("Value").Float())
+			p.gauges[name].With(prometheus.Labels{"vehicle_name": vehicle_name}).Set(state.FieldByName(field.Name).FieldByName("Value").Float())
 		case "StringValue":
-			p.collectors[name].Reset()
-			p.collectors[name].With(prometheus.Labels{"vehicle_name": vehicle_name, "value": state.FieldByName(field.Name).FieldByName("Value").String()}).Set(1)
+			p.gauges[name].Reset()
+			p.gauges[name].With(prometheus.Labels{"vehicle_name": vehicle_name, "value": state.FieldByName(field.Name).FieldByName("Value").String()}).Set(1)
 		case "LocationValue":
 			for _, fname := range []string{"Latitude", "Longitude"} {
 				f := toSnakeCase(fname)
-				p.collectors[name+"_"+f].With(prometheus.Labels{"vehicle_name": vehicle_name}).Set(state.FieldByName(field.Name).FieldByName(fname).Float())
+				p.gauges[name+"_"+f].With(prometheus.Labels{"vehicle_name": vehicle_name}).Set(state.FieldByName(field.Name).FieldByName(fname).Float())
 			}
 		case "LocationErrorValue":
 			for _, fname := range []string{"PositionVertical", "PositionHorizontal", "Speed", "Bearing"} {
 				f := toSnakeCase(fname)
-				p.collectors[name+"_"+f].With(prometheus.Labels{"vehicle_name": vehicle_name}).Set(state.FieldByName(field.Name).FieldByName(fname).Float())
+				p.gauges[name+"_"+f].With(prometheus.Labels{"vehicle_name": vehicle_name}).Set(state.FieldByName(field.Name).FieldByName(fname).Float())
 			}
 		default:
 			fmt.Printf("unknown type: %s: %s\n", field.Type.Name(), name)
@@ -187,10 +203,15 @@ func (l *loginFlow) IsLoggedIn() bool {
 func (l *loginFlow) Vehicles() []rivian.Vehicle {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	// Return empty slice if not logged in
+	if !l.loggedIn {
+		return []rivian.Vehicle{}
+	}
 	return l.vehicles
 }
 
-func (l *loginFlow) Logout() {
+func (l *loginFlow) SetLoggedOut() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -198,14 +219,14 @@ func (l *loginFlow) Logout() {
 }
 
 func (l *loginFlow) logoutWithLock() {
-	l.p.collectors["need_login"].With(prometheus.Labels{}).Set(1.0)
+	l.p.gauges["need_login"].With(prometheus.Labels{}).Set(1.0)
 	l.loggedIn = false
 	l.needOTP = false
 	l.email = ""
 	l.vehicles = []rivian.Vehicle{}
 }
 
-func (l *loginFlow) Login(ctx context.Context) error {
+func (l *loginFlow) SetLoggedIn(ctx context.Context) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -213,7 +234,7 @@ func (l *loginFlow) Login(ctx context.Context) error {
 }
 
 func (l *loginFlow) loginWithLock(ctx context.Context) error {
-	l.p.collectors["need_login"].With(prometheus.Labels{}).Set(0.0)
+	l.p.gauges["need_login"].With(prometheus.Labels{}).Set(0.0)
 	l.loggedIn = true
 	l.needOTP = false
 	l.email = ""
@@ -352,7 +373,21 @@ func main() {
 	var sessionFile string
 	flag.BoolVar(&debug, "d", false, "debug")
 	flag.StringVar(&sessionFile, "s", ".rivian_session", "filename for session storage")
-	ctx := context.Background()
+	flag.Parse()
+
+	// Create a context that can be canceled
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Set up a signal handler to cancel the context on termination signals
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-signalChan
+		log.Println("Received termination signal, shutting down...")
+		cancel()
+	}()
+
 	c := rivian.NewClient()
 	c.Debug(debug)
 	c.ReadSessionData(sessionFile)
@@ -366,32 +401,45 @@ func main() {
 	loginHandler := newLoginFlow(c, p)
 
 	if c.NeedsLogin() {
-		loginHandler.Logout()
+		// client is not logged in, set the handler state to logged out.
+		loginHandler.SetLoggedOut()
 	} else {
-		loginHandler.Login(context.Background())
+		// client is logged in, set the handler state to logged in.
+		err := loginHandler.SetLoggedIn(ctx)
+		if err != nil {
+			loginHandler.SetLoggedOut()
+			log.Printf("Error logging in: %s\n", err.Error())
+		}
 	}
 
-	done := make(chan struct{})
 	ticker := time.NewTicker(30 * time.Second)
 
 	go func() {
 		for {
 			select {
-			case <-done:
+			case <-ctx.Done():
+				log.Println("Context canceled, stopping ticker...")
+				ticker.Stop()
 				return
 			case <-ticker.C:
+				if c.NeedsLogin() {
+					loginHandler.SetLoggedOut()
+					continue
+				}
 				for _, v := range loginHandler.Vehicles() {
 					state, err := c.GetVehicleState(ctx, v)
 					if err != nil {
-						log.Println(err)
+						log.Println(err.Error())
+						p.counters["errors"].With(prometheus.Labels{"type": "vehicle_state"}).Inc()
 						if strings.Contains(err.Error(), "UNAUTHENTICATED") {
-							loginHandler.Logout()
+							loginHandler.SetLoggedOut()
 						}
 						continue
 					}
 					if state.OtaCurrentVersionWeek.Value == 0 {
 						// Rivian once returned all nulls
 						log.Println("Skipping nil values")
+						p.counters["errors"].With(prometheus.Labels{"type": "nil_values"}).Inc()
 						continue
 					}
 					p.CollectMetrics(v.Name, state)
@@ -405,8 +453,30 @@ func main() {
 
 	http.Handle("/metrics", promhttp.Handler())
 	http.Handle("/", loginHandler)
-	err = http.ListenAndServe(":9666", nil)
-	done <- struct{}{}
-	ticker.Stop()
-	log.Fatal(err)
+	// Create an HTTP server
+	server := &http.Server{
+		Addr:    ":9666",
+		Handler: nil, // DefaultServeMux is used
+	}
+
+	// Start the server in a goroutine
+	go func() {
+		log.Println("Starting server on :9666")
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("HTTP server ListenAndServe: %v", err)
+		}
+	}()
+
+	// Wait for the context to be canceled
+	<-ctx.Done()
+
+	// Gracefully shut down the server
+	log.Println("Shutting down server...")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Fatalf("HTTP server Shutdown: %v", err)
+	}
+
+	log.Println("Server stopped")
 }

@@ -1,0 +1,7 @@
+version: "3.8"
+
+services:
+  app:
+    image: rivian-prometheus:latest
+    ports:
+      - "9666:9666"

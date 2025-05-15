@@ -73,7 +73,7 @@ func (c *Client) GetCSRFToken(ctx context.Context) error {
 	var resp CreateCSRFToken
 	err := c.client.Mutate(ctx, &resp, map[string]interface{}{}, graphql.OperationName("CreateCSRFToken"))
 	if err != nil {
-		log.Printf("error: %#v", err)
+		log.Printf("error GetCSRFToken: %#v", err)
 		return err
 	}
 
@@ -103,7 +103,7 @@ func (c *Client) Login(ctx context.Context, email string, password string) (bool
 	}
 	err := c.client.Mutate(ctx, &resp, variables, graphql.OperationName("Login"))
 	if err != nil {
-		log.Printf("error: %#v", err)
+		log.Printf("error Login: %#v", err)
 		return false, err
 	}
 
@@ -136,7 +136,7 @@ func (c *Client) ValidateOTP(ctx context.Context, email string, otp string) erro
 	}
 	err := c.client.Mutate(ctx, &resp, variables, graphql.OperationName("LoginWithOTP"))
 	if err != nil {
-		log.Printf("error: %#v", err)
+		log.Printf("error ValidateOTP: %#v", err)
 		return err
 	}
 
@@ -164,7 +164,7 @@ func (c *Client) GetVehicles(ctx context.Context) ([]Vehicle, error) {
 	variables := map[string]interface{}{}
 	err := c.client.Query(ctx, &resp, variables, graphql.OperationName("getUserInfo"))
 	if err != nil {
-		log.Printf("error: %#v", err)
+		log.Printf("error GetVehicles: %#v", err)
 		return nil, err
 	}
 
@@ -328,7 +328,7 @@ func (c *Client) GetVehicleState(ctx context.Context, v Vehicle) (*VehicleState,
 	}
 	err := c.client.Query(ctx, &resp, variables, graphql.OperationName("GetVehicleState"))
 	if err != nil {
-		log.Printf("error: %#v", err)
+		log.Printf("error GetVehicleState: %#v", err)
 		return nil, err
 	}
 
