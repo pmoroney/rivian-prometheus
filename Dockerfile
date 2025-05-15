@@ -18,6 +18,9 @@ FROM debian:stable-slim
 
 WORKDIR /app
 
+# Install CA certificates
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+
 # Copy the compiled binary from the builder stage
 COPY --from=builder /app/rivian-prometheus /app/rivian-prometheus
 
