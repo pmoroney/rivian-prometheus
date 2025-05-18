@@ -221,8 +221,6 @@ func (l *loginFlow) SetLoggedOut() {
 func (l *loginFlow) logoutWithLock() {
 	l.p.gauges["need_login"].With(prometheus.Labels{}).Set(1.0)
 	l.loggedIn = false
-	l.needOTP = false
-	l.email = ""
 	l.vehicles = []rivian.Vehicle{}
 }
 
